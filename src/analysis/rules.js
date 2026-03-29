@@ -99,6 +99,11 @@ function analyzeS3(buckets) {
   for (const bucket of buckets) {
     const resource = `s3::${bucket.name}`;
 
+    let bucketPolicy = null;
+    if (bucket.policyText) {
+      try { bucketPolicy = JSON.parse(bucket.policyText); } catch (_) { /* malformed policy */ }
+    }
+
     // S3-001: Public ACL
     if (bucket.acl?.Grants) {
       for (const grant of bucket.acl.Grants) {
@@ -117,22 +122,18 @@ function analyzeS3(buckets) {
     }
 
     // S3-002: Public bucket policy (Principal: *)
-    if (bucket.policyText) {
-      let policy;
-      try { policy = JSON.parse(bucket.policyText); } catch (_) { policy = null; }
-      if (policy?.Statement) {
-        for (const stmt of policy.Statement) {
-          if (
-            stmt.Effect === "Allow" &&
-            (stmt.Principal === "*" || stmt.Principal?.AWS === "*")
-          ) {
-            findings.push({
-              ruleId:   "S3-002",
-              resource,
-              detail:   `Bucket policy allows Principal: * on an Allow statement`,
-            });
-            break;
-          }
+    if (bucketPolicy?.Statement) {
+      for (const stmt of bucketPolicy.Statement) {
+        if (
+          stmt.Effect === "Allow" &&
+          (stmt.Principal === "*" || stmt.Principal?.AWS === "*")
+        ) {
+          findings.push({
+            ruleId:   "S3-002",
+            resource,
+            detail:   `Bucket policy allows Principal: * on an Allow statement`,
+          });
+          break;
         }
       }
     }
@@ -164,20 +165,14 @@ function analyzeS3(buckets) {
     }
 
     // S3-005: TLS not enforced (no Deny on aws:SecureTransport = false)
-    const hasSecureTransportDeny = (() => {
-      if (!bucket.policyText) return false;
-      let policy;
-      try { policy = JSON.parse(bucket.policyText); } catch (_) { return false; }
-      if (!policy?.Statement) return false;
-      return policy.Statement.some((stmt) => {
-        if (stmt.Effect !== "Deny") return false;
-        const condition = stmt.Condition;
-        return (
-          condition?.Bool?.["aws:SecureTransport"] === "false" ||
-          condition?.Bool?.["aws:SecureTransport"] === false
-        );
-      });
-    })();
+    const hasSecureTransportDeny = bucketPolicy?.Statement?.some((stmt) => {
+      if (stmt.Effect !== "Deny") return false;
+      const condition = stmt.Condition;
+      return (
+        condition?.Bool?.["aws:SecureTransport"] === "false" ||
+        condition?.Bool?.["aws:SecureTransport"] === false
+      );
+    }) ?? false;
 
     if (!hasSecureTransportDeny) {
       findings.push({
@@ -223,11 +218,19 @@ function classifyNetworkFinding(sgId, sgName, fromPort, toPort, protocol, cidr, 
   }
 
   // NET-001: Admin port open to internet
-  if (ADMIN_PORTS.has(fromPort)) {
+  const spansAdminPort = fromPort !== null && toPort !== null &&
+    [...ADMIN_PORTS].some((p) => p >= fromPort && p <= toPort);
+
+  if (spansAdminPort) {
+    const exposedAdminPorts = [...ADMIN_PORTS].filter((p) => p >= fromPort && p <= toPort);
+    const portDesc = exposedAdminPorts.length === 1
+      ? `Admin port ${exposedAdminPorts[0]}`
+      : `Admin ports ${exposedAdminPorts.join(",")}`;
+
     findings.push({
       ruleId:   "NET-001",
       resource: `ec2:security-group/${sgId}`,
-      detail:   `Admin port ${fromPort} open to ${cidr} on ${label}`,
+      detail:   `${portDesc} open to ${cidr} on ${label}`,
     });
     return;
   }

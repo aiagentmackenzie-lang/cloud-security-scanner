@@ -75,6 +75,23 @@ describe("analyzeIAM", () => {
     expect(findings.some((f) => f.ruleId === "IAM-003")).toBe(true);
   });
 
+  it("flags IAM-003 for a trust policy with Principal: { AWS: '*' }", () => {
+    const roles = [{
+      name: "public-role-2",
+      trustPolicy: {
+        Statement: [{
+          Effect: "Allow",
+          Principal: { AWS: "*" },
+          Action: "sts:AssumeRole",
+        }],
+      },
+      attachedPolicies: [],
+      inlinePolicies: [],
+    }];
+    const findings = analyzeIAM(roles);
+    expect(findings.some((f) => f.ruleId === "IAM-003")).toBe(true);
+  });
+
   it("returns empty array for a clean role", () => {
     const roles = [{
       name: "clean-role",
@@ -264,6 +281,18 @@ describe("analyzeSecurityGroups", () => {
     });
     const findings = analyzeSecurityGroups([sg]);
     expect(findings.some((f) => f.ruleId === "NET-002")).toBe(true);
+  });
+
+  it("flags NET-001 for a port range that spans an admin port (e.g. 20-22)", () => {
+    const sg = makeSG({
+      IpPermissions: [{
+        IpProtocol: "tcp", FromPort: 20, ToPort: 22,
+        IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+        Ipv6Ranges: [],
+      }],
+    });
+    const findings = analyzeSecurityGroups([sg]);
+    expect(findings.some((f) => f.ruleId === "NET-001")).toBe(true);
   });
 
   it("flags NET-003 for a non-admin port open to 0.0.0.0/0", () => {
