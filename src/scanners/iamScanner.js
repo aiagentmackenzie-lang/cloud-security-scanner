@@ -25,6 +25,34 @@ async function getAllRoles() {
   return roles;
 }
 
+/**
+ * Paginates ListAttachedRolePolicies for a given role.
+ */
+async function getAttachedPolicies(roleName) {
+  const policies = [];
+  let marker;
+  do {
+    const resp = await iam.send(new ListAttachedRolePoliciesCommand({ RoleName: roleName, Marker: marker, MaxItems: 100 }));
+    policies.push(...(resp.AttachedPolicies || []));
+    marker = resp.IsTruncated ? resp.Marker : undefined;
+  } while (marker);
+  return policies;
+}
+
+/**
+ * Paginates ListRolePolicies (inline policy names) for a given role.
+ */
+async function getInlinePolicyNames(roleName) {
+  const names = [];
+  let marker;
+  do {
+    const resp = await iam.send(new ListRolePoliciesCommand({ RoleName: roleName, Marker: marker, MaxItems: 100 }));
+    names.push(...(resp.PolicyNames || []));
+    marker = resp.IsTruncated ? resp.Marker : undefined;
+  } while (marker);
+  return names;
+}
+
 async function scanIAM() {
   const rawRoles = await getAllRoles();
   const results  = [];
@@ -41,20 +69,30 @@ async function scanIAM() {
       // Malformed trust policy — rule engine handles null safely.
     }
 
-    const attachedResp = await iam.send(new ListAttachedRolePoliciesCommand({ RoleName: roleName }));
-    const attachedPolicies = attachedResp.AttachedPolicies || [];
+    let attachedPolicies = [];
+    try {
+      attachedPolicies = await getAttachedPolicies(roleName);
+    } catch (err) {
+      console.warn(`[WARN] Could not list attached policies for role "${roleName}": ${err.message}`);
+    }
 
-    const inlineNamesResp = await iam.send(new ListRolePoliciesCommand({ RoleName: roleName }));
-    const inlinePolicies  = [];
+    let inlinePolicyNames = [];
+    try {
+      inlinePolicyNames = await getInlinePolicyNames(roleName);
+    } catch (err) {
+      console.warn(`[WARN] Could not list inline policy names for role "${roleName}": ${err.message}`);
+    }
 
-    for (const policyName of inlineNamesResp.PolicyNames || []) {
+    const inlinePolicies = [];
+
+    for (const policyName of inlinePolicyNames) {
       try {
         const polResp = await iam.send(new GetRolePolicyCommand({ RoleName: roleName, PolicyName: policyName }));
         // GetRolePolicy also returns the document URL-encoded.
         const document = JSON.parse(decodeURIComponent(polResp.PolicyDocument));
         inlinePolicies.push({ name: policyName, document });
-      } catch (_) {
-        // Skip unreadable policies gracefully.
+      } catch (err) {
+        console.warn(`[WARN] Could not fetch inline policy "${policyName}" for role "${roleName}": ${err.message}`);
       }
     }
 
