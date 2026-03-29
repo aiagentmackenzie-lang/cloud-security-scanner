@@ -24,4 +24,14 @@ describe("parseArgs", () => {
     expect(args.format).toBe("json");
     expect(args.output).toBe("./out.json");
   });
+
+  it("handles --key=val=ue with multiple equals signs (value includes remaining =)", () => {
+    const args = parseArgs(["node", "index.js", "--output=./reports/2026=04"]);
+    expect(args.output).toBe("./reports/2026=04");
+  });
+
+  it("stores empty string for --key= with no value after equals", () => {
+    const args = parseArgs(["node", "index.js", "--output="]);
+    expect(args.output).toBe("");
+  });
 });

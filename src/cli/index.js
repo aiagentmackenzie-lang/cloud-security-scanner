@@ -8,7 +8,7 @@ const { scanIAM } = require("../scanners/iamScanner");
 const { scanEC2 } = require("../scanners/ec2Scanner");
 
 const { analyzeIAM, analyzeS3, analyzeSecurityGroups } = require("../analysis/rules");
-const { enrichFindings, meetsMinSeverity }             = require("../analysis/severities");
+const { enrichFindings, meetsMinSeverity, SEVERITY_ORDER } = require("../analysis/severities");
 const { reportFindings }                               = require("../utils/reporter");
 const { REGION }                                       = require("../config/aws");
 
@@ -23,8 +23,10 @@ function parseArgs(argv) {
   const args = {};
   for (let i = 2; i < argv.length; i++) {
     if (argv[i].includes("=")) {
-      const [key, val] = argv[i].split("=");
-      args[key.replace(/^--/, "")] = val;
+      const eqIdx = argv[i].indexOf("=");
+      const key = argv[i].slice(0, eqIdx).replace(/^--/, "");
+      const val = argv[i].slice(eqIdx + 1);
+      args[key] = val;
     } else if (argv[i].startsWith("--")) {
       const key = argv[i].replace(/^--/, "");
       const next = argv[i + 1];
@@ -38,8 +40,25 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv);
 
-  const services    = (args.services          || "iam,s3,ec2").split(",").map((s) => s.trim());
+  const KNOWN_SERVICES = new Set(["iam", "s3", "ec2"]);
+  const services = (args.services || "iam,s3,ec2")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => {
+      if (!KNOWN_SERVICES.has(s)) {
+        console.warn(`[WARN] Unknown service "${s}" — skipping. Known services: iam, s3, ec2`);
+        return false;
+      }
+      return true;
+    });
+
   const minSeverity = (args["min-severity"]   || "INFO").toUpperCase();
+  if (!SEVERITY_ORDER.includes(minSeverity)) {
+    console.error(`[ERROR] Invalid --min-severity "${minSeverity}". Valid values: ${SEVERITY_ORDER.join(", ")}`);
+    process.exitCode = 1;
+    return;
+  }
+
   const format      = (args.format            || "table").toLowerCase();
   const outputPath  =  args.output            || null;
 
@@ -68,6 +87,8 @@ async function main() {
     const filtered = enriched.filter((f) => meetsMinSeverity(f, minSeverity));
 
     if (format === "json") {
+      // JSON format prints to stdout; use shell redirection to write to a file (e.g. > report.json).
+      // The --output flag is only honoured in table format.
       console.log(JSON.stringify({ generatedAt: new Date().toISOString(), findings: filtered }, null, 2));
     } else {
       reportFindings(filtered, { outputPath });
