@@ -1,0 +1,24 @@
+{
+  "name": "cloud-security",
+  "version": "1.0.0",
+  "description": "Read-only AWS misconfiguration scanner aligned to CIS AWS Foundations Benchmark v1.4",
+  "main": "src/cli/index.js",
+  "scripts": {
+    "scan":          "node src/cli/index.js",
+    "scan:critical": "node src/cli/index.js --min-severity=HIGH",
+    "scan:json":     "node src/cli/index.js --format=table --output=./reports/latest.json",
+    "test":          "jest --coverage"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.0.0",
+    "@aws-sdk/client-iam": "^3.0.0",
+    "@aws-sdk/client-s3":  "^3.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0"
+  },
+  "license": "MIT"
+}
