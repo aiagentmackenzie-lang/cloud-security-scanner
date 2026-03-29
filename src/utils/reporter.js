@@ -30,6 +30,8 @@ function colorSeverity(severity) {
 
 /**
  * Prints findings to stdout and optionally writes a JSON report.
+ * SECURITY NOTE: outputPath is caller-supplied. Callers are responsible for
+ * sanitising this value. This function must not be exposed to untrusted input.
  *
  * @param {Array}  findings          - Enriched findings (from severities.enrichFindings)
  * @param {Object} [options]
@@ -64,6 +66,7 @@ function reportFindings(findings, { outputPath } = {}) {
   console.log(`${C.bold}SUMMARY${C.reset}  ${summaryLine}  ${C.dim}(Total: ${findings.length})${C.reset}\n`);
 
   if (outputPath) {
+    const resolvedPath = path.resolve(outputPath);
     const report = {
       generatedAt:   new Date().toISOString(),
       totalFindings: findings.length,
@@ -71,8 +74,8 @@ function reportFindings(findings, { outputPath } = {}) {
       findings,
     };
     try {
-      fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true });
-      fs.writeFileSync(outputPath, JSON.stringify(report, null, 2), "utf8");
+      fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+      fs.writeFileSync(resolvedPath, JSON.stringify(report, null, 2), "utf8");
       console.log(`${C.green}JSON report written to:${C.reset} ${outputPath}\n`);
     } catch (err) {
       console.error(`[WARN] Could not write JSON report: ${err.message}`);

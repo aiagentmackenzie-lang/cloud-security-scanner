@@ -5,9 +5,15 @@ const os   = require("os");
 
 // Capture stdout without mocking the entire console
 let output = "";
+let errorOutput = "";
 const originalLog = console.log;
 const originalError = console.error;
-beforeEach(() => { output = ""; console.log = (...args) => { output += args.join(" ") + "\n"; }; });
+beforeEach(() => {
+  output = "";
+  errorOutput = "";
+  console.log = (...args) => { output += args.join(" ") + "\n"; };
+  console.error = (...args) => { errorOutput += args.join(" ") + "\n"; };
+});
 afterEach(() => { console.log = originalLog; console.error = originalError; });
 
 const { reportFindings } = require("../../src/utils/reporter");
@@ -71,6 +77,17 @@ describe("reportFindings", () => {
     const tmpDir  = fs.mkdtempSync(path.join(os.tmpdir(), "cloud-sec-test-"));
     const outFile = path.join(tmpDir, "nested", "deep", "report.json");
     expect(() => reportFindings(makeFindings(), { outputPath: outFile })).not.toThrow();
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it("logs a warning when the output file cannot be written", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cloud-sec-test-"));
+    // Create a FILE at the path that mkdirSync will try to use as a directory
+    const blockingFile = path.join(tmpDir, "blocker");
+    fs.writeFileSync(blockingFile, "I am a file, not a dir");
+    const outFile = path.join(blockingFile, "report.json"); // parent is a file — will throw
+    expect(() => reportFindings(makeFindings(), { outputPath: outFile })).not.toThrow();
+    expect(errorOutput).toMatch(/\[WARN\]/);
     fs.rmSync(tmpDir, { recursive: true });
   });
 });
