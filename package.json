@@ -6,7 +6,7 @@
   "scripts": {
     "scan":          "node src/cli/index.js",
     "scan:critical": "node src/cli/index.js --min-severity=HIGH",
-    "scan:json":     "node src/cli/index.js --format=table --output=./reports/latest.json",
+    "scan:json":     "node src/cli/index.js --format=json --output=./reports/latest.json",
     "test":          "jest --coverage"
   },
   "engines": {

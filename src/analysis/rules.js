@@ -6,13 +6,21 @@
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
+ * Normalises a policy document's Statement field to an array.
+ * AWS supports both single-object and array-of-objects forms.
+ */
+function normalizeStatements(document) {
+  if (!document?.Statement) return [];
+  return Array.isArray(document.Statement) ? document.Statement : [document.Statement];
+}
+
+/**
  * Returns true if any Allow statement in a policy document uses a wildcard
  * for Action or Resource. Deny statements are intentionally excluded — they
  * are security controls, not vulnerabilities.
  */
 function hasWildcardAllow(document) {
-  if (!document?.Statement) return false;
-  for (const stmt of document.Statement) {
+  for (const stmt of normalizeStatements(document)) {
     if (stmt.Effect !== "Allow") continue;
     const actions   = [].concat(stmt.Action   || []);
     const resources = [].concat(stmt.Resource || []);
@@ -22,14 +30,23 @@ function hasWildcardAllow(document) {
 }
 
 /**
+ * Returns true if a principal value contains "*" anywhere (exact match, not glob).
+ */
+function isPublicPrincipal(principal) {
+  if (principal === "*") return true;
+  if (typeof principal === "object" && principal.AWS === "*") return true;
+  if (Array.isArray(principal) && principal.some((p) => p === "*")) return true;
+  if (typeof principal === "object" && Array.isArray(principal.AWS) && principal.AWS.some((p) => p === "*")) return true;
+  return false;
+}
+
+/**
  * Returns true if a trust policy grants AssumeRole to Principal: "*".
  */
 function hasPublicTrustPrincipal(trustPolicy) {
-  if (!trustPolicy?.Statement) return false;
-  for (const stmt of trustPolicy.Statement) {
+  for (const stmt of normalizeStatements(trustPolicy)) {
     if (stmt.Effect !== "Allow") continue;
-    if (stmt.Principal === "*") return true;
-    if (typeof stmt.Principal === "object" && stmt.Principal.AWS === "*") return true;
+    if (isPublicPrincipal(stmt.Principal)) return true;
   }
   return false;
 }
@@ -122,19 +139,15 @@ function analyzeS3(buckets) {
     }
 
     // S3-002: Public bucket policy (Principal: *)
-    if (bucketPolicy?.Statement) {
-      for (const stmt of bucketPolicy.Statement) {
-        if (
-          stmt.Effect === "Allow" &&
-          (stmt.Principal === "*" || stmt.Principal?.AWS === "*")
-        ) {
-          findings.push({
-            ruleId:   "S3-002",
-            resource,
-            detail:   `Bucket policy allows Principal: * on an Allow statement`,
-          });
-          break;
-        }
+    const statements = normalizeStatements(bucketPolicy);
+    for (const stmt of statements) {
+      if (stmt.Effect === "Allow" && isPublicPrincipal(stmt.Principal)) {
+        findings.push({
+          ruleId:   "S3-002",
+          resource,
+          detail:   `Bucket policy allows Principal: * on an Allow statement`,
+        });
+        break;
       }
     }
 
@@ -165,14 +178,14 @@ function analyzeS3(buckets) {
     }
 
     // S3-005: TLS not enforced (no Deny on aws:SecureTransport = false)
-    const hasSecureTransportDeny = bucketPolicy?.Statement?.some((stmt) => {
+    const hasSecureTransportDeny = normalizeStatements(bucketPolicy).some((stmt) => {
       if (stmt.Effect !== "Deny") return false;
       const condition = stmt.Condition;
       return (
         condition?.Bool?.["aws:SecureTransport"] === "false" ||
         condition?.Bool?.["aws:SecureTransport"] === false
       );
-    }) ?? false;
+    });
 
     if (!hasSecureTransportDeny) {
       findings.push({

@@ -52,6 +52,12 @@ async function main() {
       return true;
     });
 
+  if (services.length === 0) {
+    console.error("[ERROR] No valid services to scan. Use: iam, s3, ec2");
+    process.exitCode = 1;
+    return;
+  }
+
   const minSeverity = (args["min-severity"]   || "INFO").toUpperCase();
   if (!SEVERITY_ORDER.includes(minSeverity)) {
     console.error(`[ERROR] Invalid --min-severity "${minSeverity}". Valid values: ${SEVERITY_ORDER.join(", ")}`);
@@ -87,9 +93,17 @@ async function main() {
     const filtered = enriched.filter((f) => meetsMinSeverity(f, minSeverity));
 
     if (format === "json") {
-      // JSON format prints to stdout; use shell redirection to write to a file (e.g. > report.json).
-      // The --output flag is only honoured in table format.
-      console.log(JSON.stringify({ generatedAt: new Date().toISOString(), findings: filtered }, null, 2));
+      const payload = JSON.stringify({ generatedAt: new Date().toISOString(), findings: filtered }, null, 2);
+      if (outputPath) {
+        const fs = require("fs");
+        const path = require("path");
+        const resolvedPath = path.resolve(outputPath);
+        fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+        fs.writeFileSync(resolvedPath, payload, "utf8");
+        console.log(`JSON report written to: ${outputPath}`);
+      } else {
+        console.log(payload);
+      }
     } else {
       reportFindings(filtered, { outputPath });
     }

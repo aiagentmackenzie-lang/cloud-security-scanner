@@ -36,6 +36,22 @@ describe("analyzeIAM", () => {
     expect(findings.some((f) => f.ruleId === "IAM-001")).toBe(false);
   });
 
+  it("flags IAM-001 when Statement is a single object (not array) with wildcard", () => {
+    const roles = [{
+      name: "single-stmt-role",
+      trustPolicy: null,
+      attachedPolicies: [],
+      inlinePolicies: [{
+        name: "bad-inline",
+        document: {
+          Statement: { Effect: "Allow", Action: "*", Resource: "arn:aws:s3:::bucket/*" },
+        },
+      }],
+    }];
+    const findings = analyzeIAM(roles);
+    expect(findings.some((f) => f.ruleId === "IAM-001")).toBe(true);
+  });
+
   it("flags IAM-002 for AdministratorAccess attached policy", () => {
     const roles = [{
       name: "ci-deploy",
@@ -92,6 +108,40 @@ describe("analyzeIAM", () => {
     expect(findings.some((f) => f.ruleId === "IAM-003")).toBe(true);
   });
 
+  it("flags IAM-003 for Principal as array containing '*' (S3-002 backport)", () => {
+    const roles = [{
+      name: "public-role-array",
+      trustPolicy: {
+        Statement: [{
+          Effect: "Allow",
+          Principal: ["*"],
+          Action: "sts:AssumeRole",
+        }],
+      },
+      attachedPolicies: [],
+      inlinePolicies: [],
+    }];
+    const findings = analyzeIAM(roles);
+    expect(findings.some((f) => f.ruleId === "IAM-003")).toBe(true);
+  });
+
+  it("flags IAM-003 for Principal.AWS as array containing '*'", () => {
+    const roles = [{
+      name: "public-role-aws-array",
+      trustPolicy: {
+        Statement: [{
+          Effect: "Allow",
+          Principal: { AWS: ["arn:aws:iam::123:root", "*"] },
+          Action: "sts:AssumeRole",
+        }],
+      },
+      attachedPolicies: [],
+      inlinePolicies: [],
+    }];
+    const findings = analyzeIAM(roles);
+    expect(findings.some((f) => f.ruleId === "IAM-003")).toBe(true);
+  });
+
   it("returns empty array for a clean role", () => {
     const roles = [{
       name: "clean-role",
@@ -102,6 +152,19 @@ describe("analyzeIAM", () => {
       inlinePolicies: [],
     }];
     expect(analyzeIAM(roles)).toEqual([]);
+  });
+
+  it("flags IAM-003 when trust policy Statement is a single object (not array)", () => {
+    const roles = [{
+      name: "public-single-stmt",
+      trustPolicy: {
+        Statement: { Effect: "Allow", Principal: "*", Action: "sts:AssumeRole" },
+      },
+      attachedPolicies: [],
+      inlinePolicies: [],
+    }];
+    const findings = analyzeIAM(roles);
+    expect(findings.some((f) => f.ruleId === "IAM-003")).toBe(true);
   });
 });
 
@@ -181,6 +244,25 @@ describe("analyzeS3", () => {
     expect(findings.some((f) => f.ruleId === "S3-004")).toBe(true);
   });
 
+  it("flags S3-002 when bucket policy Statement is a single object with Principal: *", () => {
+    const bucket = makeCleanBucket();
+    bucket.policyText = JSON.stringify({
+      Statement: { Effect: "Allow", Principal: "*", Action: "s3:GetObject", Resource: "arn:aws:s3:::my-bucket/*" },
+    });
+    const findings = analyzeS3([bucket]);
+    expect(findings.some((f) => f.ruleId === "S3-002")).toBe(true);
+  });
+
+  it("flags S3-005 when policy Statement is a single object without SecureTransport deny", () => {
+    const bucket = makeCleanBucket();
+    bucket.policyText = JSON.stringify({
+      Statement: { Effect: "Allow", Principal: "*", Action: "s3:GetObject", Resource: "arn:aws:s3:::my-bucket/*" },
+    });
+    const findings = analyzeS3([bucket]);
+    // No Deny statement at all
+    expect(findings.some((f) => f.ruleId === "S3-005")).toBe(true);
+  });
+
   it("flags S3-005 when bucket policy has no SecureTransport deny", () => {
     const bucket = makeCleanBucket();
     bucket.policyText = JSON.stringify({
@@ -195,6 +277,24 @@ describe("analyzeS3", () => {
     bucket.policyText = null;
     const findings = analyzeS3([bucket]);
     expect(findings.some((f) => f.ruleId === "S3-005")).toBe(true);
+  });
+
+  it("flags S3-002 when Principal is an array containing '*'", () => {
+    const bucket = makeCleanBucket();
+    bucket.policyText = JSON.stringify({
+      Statement: [{ Effect: "Allow", Principal: ["*"], Action: "s3:GetObject", Resource: "arn:aws:s3:::my-bucket/*" }],
+    });
+    const findings = analyzeS3([bucket]);
+    expect(findings.some((f) => f.ruleId === "S3-002")).toBe(true);
+  });
+
+  it("flags S3-002 when Principal.AWS is an array containing '*'", () => {
+    const bucket = makeCleanBucket();
+    bucket.policyText = JSON.stringify({
+      Statement: [{ Effect: "Allow", Principal: { AWS: ["arn:aws:iam::123:root", "*"] }, Action: "s3:GetObject", Resource: "arn:aws:s3:::my-bucket/*" }],
+    });
+    const findings = analyzeS3([bucket]);
+    expect(findings.some((f) => f.ruleId === "S3-002")).toBe(true);
   });
 });
 
