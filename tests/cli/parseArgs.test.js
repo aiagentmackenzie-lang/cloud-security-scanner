@@ -34,4 +34,13 @@ describe("parseArgs", () => {
     const args = parseArgs(["node", "index.js", "--output="]);
     expect(args.output).toBe("");
   });
+
+  // BUG-4: --services= should NOT fall back to default.
+  // An explicit empty string means the user wants no services,
+  // which should be caught by the main() validation.
+  it("preserves empty string for --services= (does not fall back to default)", () => {
+    const args = parseArgs(["node", "index.js", "--services="]);
+    // The empty string must survive so main() can detect it as invalid.
+    expect(args.services).toBe("");
+  });
 });

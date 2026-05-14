@@ -14,6 +14,11 @@ const SEVERITY = {
 const SEVERITY_ORDER = ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
 const RULE_METADATA = {
+  "S3-000": {
+    severity:    SEVERITY.INFO,
+    impact:      "Findings for this bucket may be incomplete because the scanning identity lacked access to one or more configuration checks",
+    remediation: "Grant the scanning identity s3:GetBucketAcl, s3:GetBucketPolicy, s3:GetEncryptionConfiguration, and s3:GetBucketPublicAccessBlock for cross-account or permission-constrained buckets",
+  },
   "IAM-001": {
     severity:    SEVERITY.MEDIUM,
     impact:      "Over-broad permissions increase blast radius if this role is compromised",

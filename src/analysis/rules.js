@@ -115,6 +115,17 @@ function analyzeS3(buckets) {
 
   for (const bucket of buckets) {
     const resource = `s3::${bucket.name}`;
+    const accessErrors = bucket.accessErrors || [];
+
+    // S3-000: Emit an INFO finding when access was denied, so operators know
+    // results may be incomplete. This avoids silent false negatives.
+    if (accessErrors.length > 0) {
+      findings.push({
+        ruleId:   "S3-000",
+        resource,
+        detail:   `Access denied to: ${accessErrors.join(", ")} — findings for this bucket may be incomplete`,
+      });
+    }
 
     let bucketPolicy = null;
     if (bucket.policyText) {
@@ -152,47 +163,59 @@ function analyzeS3(buckets) {
     }
 
     // S3-003: Block Public Access not fully enabled
-    const bpa = bucket.publicAccessBlock?.PublicAccessBlockConfiguration;
-    if (
-      !bpa ||
-      !bpa.BlockPublicAcls ||
-      !bpa.BlockPublicPolicy ||
-      !bpa.IgnorePublicAcls ||
-      !bpa.RestrictPublicBuckets
-    ) {
-      findings.push({
-        ruleId:   "S3-003",
-        resource,
-        detail:   "Block Public Access is not fully enabled on this bucket",
-      });
+    // Skip if access was denied — a null BPA due to AccessDenied is not the
+    // same as a genuinely absent configuration (avoids false positives).
+    if (!accessErrors.includes("publicAccessBlock")) {
+      const bpa = bucket.publicAccessBlock?.PublicAccessBlockConfiguration;
+      if (
+        !bpa ||
+        !bpa.BlockPublicAcls ||
+        !bpa.BlockPublicPolicy ||
+        !bpa.IgnorePublicAcls ||
+        !bpa.RestrictPublicBuckets
+      ) {
+        findings.push({
+          ruleId:   "S3-003",
+          resource,
+          detail:   "Block Public Access is not fully enabled on this bucket",
+        });
+      }
     }
 
     // S3-004: No default encryption
-    const encRules = bucket.encryption?.ServerSideEncryptionConfiguration?.Rules;
-    if (!encRules || encRules.length === 0) {
-      findings.push({
-        ruleId:   "S3-004",
-        resource,
-        detail:   "No default server-side encryption rule is configured",
-      });
+    // Skip if access was denied — missing encryption data due to AccessDenied
+    // is not proof that encryption is absent (avoids false positives).
+    if (!accessErrors.includes("encryption")) {
+      const encRules = bucket.encryption?.ServerSideEncryptionConfiguration?.Rules;
+      if (!encRules || encRules.length === 0) {
+        findings.push({
+          ruleId:   "S3-004",
+          resource,
+          detail:   "No default server-side encryption rule is configured",
+        });
+      }
     }
 
     // S3-005: TLS not enforced (no Deny on aws:SecureTransport = false)
-    const hasSecureTransportDeny = normalizeStatements(bucketPolicy).some((stmt) => {
-      if (stmt.Effect !== "Deny") return false;
-      const condition = stmt.Condition;
-      return (
-        condition?.Bool?.["aws:SecureTransport"] === "false" ||
-        condition?.Bool?.["aws:SecureTransport"] === false
-      );
-    });
-
-    if (!hasSecureTransportDeny) {
-      findings.push({
-        ruleId:   "S3-005",
-        resource,
-        detail:   "No Deny statement enforcing aws:SecureTransport=false found in bucket policy",
+    // Skip if policy access was denied — cannot evaluate TLS enforcement
+    // without the policy (avoids false positives).
+    if (!accessErrors.includes("policy")) {
+      const hasSecureTransportDeny = normalizeStatements(bucketPolicy).some((stmt) => {
+        if (stmt.Effect !== "Deny") return false;
+        const condition = stmt.Condition;
+        return (
+          condition?.Bool?.["aws:SecureTransport"] === "false" ||
+          condition?.Bool?.["aws:SecureTransport"] === false
+        );
       });
+
+      if (!hasSecureTransportDeny) {
+        findings.push({
+          ruleId:   "S3-005",
+          resource,
+          detail:   "No Deny statement enforcing aws:SecureTransport=false found in bucket policy",
+        });
+      }
     }
   }
 
@@ -230,9 +253,29 @@ function classifyNetworkFinding(sgId, sgName, fromPort, toPort, protocol, cidr, 
     return;
   }
 
+  // Handle ICMP protocols — FromPort/ToPort represent type/code, not TCP/UDP ports
+  if (protocol === "icmp" || protocol === "icmpv6") {
+    findings.push({
+      ruleId:   "NET-003",
+      resource: `ec2:security-group/${sgId}`,
+      detail:   `ICMP open to ${cidr} on ${label}`,
+    });
+    return;
+  }
+
+  // Guard: null ports can occur with protocol "-1" (handled above) but should not
+  // appear with TCP/UDP in real AWS responses. Emit a safe catch-all finding.
+  if (fromPort === null || toPort === null) {
+    findings.push({
+      ruleId:   "NET-003",
+      resource: `ec2:security-group/${sgId}`,
+      detail:   `Open port(s) to ${cidr} on ${label}`,
+    });
+    return;
+  }
+
   // NET-001: Admin port open to internet
-  const spansAdminPort = fromPort !== null && toPort !== null &&
-    [...ADMIN_PORTS].some((p) => p >= fromPort && p <= toPort);
+  const spansAdminPort = [...ADMIN_PORTS].some((p) => p >= fromPort && p <= toPort);
 
   if (spansAdminPort) {
     const exposedAdminPorts = [...ADMIN_PORTS].filter((p) => p >= fromPort && p <= toPort);

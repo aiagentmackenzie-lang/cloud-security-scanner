@@ -296,6 +296,48 @@ describe("analyzeS3", () => {
     const findings = analyzeS3([bucket]);
     expect(findings.some((f) => f.ruleId === "S3-002")).toBe(true);
   });
+
+  // ── BUG-10: Access-denied tracking ──────────────────────────────────────────
+  it("emits S3-000 INFO finding when accessErrors is non-empty", () => {
+    const bucket = makeCleanBucket();
+    bucket.accessErrors = ["acl", "encryption"];
+    const findings = analyzeS3([bucket]);
+    expect(findings.some((f) => f.ruleId === "S3-000")).toBe(true);
+    expect(findings.find((f) => f.ruleId === "S3-000").detail).toMatch(/acl.*encryption/i);
+  });
+
+  it("skips S3-003 (BPA) when publicAccessBlock access was denied", () => {
+    const bucket = makeCleanBucket();
+    bucket.publicAccessBlock = null;
+    bucket.accessErrors = ["publicAccessBlock"];
+    const findings = analyzeS3([bucket]);
+    // Should NOT fire S3-003 — cannot confirm BPA is misconfigured
+    expect(findings.some((f) => f.ruleId === "S3-003")).toBe(false);
+  });
+
+  it("skips S3-004 (encryption) when encryption access was denied", () => {
+    const bucket = makeCleanBucket();
+    bucket.encryption = null;
+    bucket.accessErrors = ["encryption"];
+    const findings = analyzeS3([bucket]);
+    expect(findings.some((f) => f.ruleId === "S3-004")).toBe(false);
+  });
+
+  it("skips S3-005 (TLS) when policy access was denied", () => {
+    const bucket = makeCleanBucket();
+    bucket.policyText = null;
+    bucket.accessErrors = ["policy"];
+    const findings = analyzeS3([bucket]);
+    expect(findings.some((f) => f.ruleId === "S3-005")).toBe(false);
+  });
+
+  it("still fires S3-003 when publicAccessBlock is null without access errors", () => {
+    const bucket = makeCleanBucket();
+    bucket.publicAccessBlock = null;
+    // No accessErrors — null means genuinely not configured
+    const findings = analyzeS3([bucket]);
+    expect(findings.some((f) => f.ruleId === "S3-003")).toBe(true);
+  });
 });
 
 // ── EC2 / Security Groups ────────────────────────────────────────────────────
@@ -405,5 +447,51 @@ describe("analyzeSecurityGroups", () => {
     });
     const findings = analyzeSecurityGroups([sg]);
     expect(findings.some((f) => f.ruleId === "NET-003")).toBe(true);
+  });
+
+  // BUG-6: null ports should produce a safe catch-all, not "Port range null-null"
+  it("flags NET-003 with safe wording when FromPort/ToPort are null on a non-all-traffic protocol", () => {
+    const sg = makeSG({
+      IpPermissions: [{
+        IpProtocol: "tcp", FromPort: null, ToPort: null,
+        IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+        Ipv6Ranges: [],
+      }],
+    });
+    const findings = analyzeSecurityGroups([sg]);
+    expect(findings.length).toBe(1);
+    expect(findings[0].ruleId).toBe("NET-003");
+    expect(findings[0].detail).toMatch(/Open port/);
+    expect(findings[0].detail).not.toMatch(/null-null/);
+  });
+
+  // BUG-7: ICMP rules should not show misleading "Port range -1--1"
+  it("flags NET-003 with ICMP wording for ICMP protocol open to internet", () => {
+    const sg = makeSG({
+      IpPermissions: [{
+        IpProtocol: "icmp", FromPort: -1, ToPort: -1,
+        IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+        Ipv6Ranges: [],
+      }],
+    });
+    const findings = analyzeSecurityGroups([sg]);
+    expect(findings.length).toBe(1);
+    expect(findings[0].ruleId).toBe("NET-003");
+    expect(findings[0].detail).toMatch(/ICMP/);
+    expect(findings[0].detail).not.toMatch(/Port range -1--1/);
+  });
+
+  it("flags NET-003 with ICMPv6 wording for ICMPv6 protocol open to ::/0", () => {
+    const sg = makeSG({
+      IpPermissions: [{
+        IpProtocol: "icmpv6", FromPort: -1, ToPort: -1,
+        IpRanges: [],
+        Ipv6Ranges: [{ CidrIpv6: "::/0" }],
+      }],
+    });
+    const findings = analyzeSecurityGroups([sg]);
+    expect(findings.length).toBe(1);
+    expect(findings[0].ruleId).toBe("NET-003");
+    expect(findings[0].detail).toMatch(/ICMP/);
   });
 });
