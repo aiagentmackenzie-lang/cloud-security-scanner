@@ -3,3 +3,12 @@ reports/
 coverage/
 .env
 *.json.bak
+
+# Planning and progress docs (not part of shipped code)
+TESTING_PROGRESS.md
+.hermes/
+docs/
+
+
+## Cloud Security Scanner — Bug Fix Plan and Testing Progress
+## (added during monthly security review)
